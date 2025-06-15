@@ -47,17 +47,17 @@ A graphical hex dump tool built with Go and the Fyne GUI toolkit. This applicati
 ┌─────────────────────────────────────────────────────────────┐
 │ Menu Bar: File | Options                                    │
 ├─────────────────────────────────────────────────────────────┤
-│ Toolbar: [Open File] [Byte Grouping: ▼] [Encoding: ▼]     │
+│ Toolbar: [Open File] [Byte Grouping: ▼] [Encoding: ▼]       │
 ├─────────────────────────────────────────────────────────────┤
-│ ┌─────────────────────────┬─────────────────────────────────┐ │
-│ │ Hex Display Panel       │ Character Display Panel        │ │
-│ │                         │                                 │ │
-│ │ 00000000: 48 65 6C 6C   │ Hell                           │ │
-│ │ 00000004: 6F 20 57 6F   │ o Wo                           │ │
-│ │ 00000008: 72 6C 64 21   │ rld!                           │ │
-│ │                         │                                 │ │
-│ └─────────────────────────┴─────────────────────────────────┘ │
-│ Status Bar: File: example.txt | Size: 12 bytes             │
+│ ┌─────────────────────────┬───────────────────────────────┐ │
+│ │ Hex Display Panel       │ Character Display Panel       │ │
+│ │                         │                               │ │
+│ │ 00000000: 48 65 6C 6C   │ Hell                          │ │
+│ │ 00000004: 6F 20 57 6F   │ o Wo                          │ │
+│ │ 00000008: 72 6C 64 21   │ rld!                          │ │
+│ │                         │                               │ │
+│ └─────────────────────────┴───────────────────────────────┘ │
+│ Status Bar: File: example.txt | Size: 12 bytes              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
