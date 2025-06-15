@@ -30,8 +30,8 @@ type HexDumpApp struct {
 	fileName string
 
 	// GUI components
-	hexDisplay      *widget.Entry
-	charDisplay     *widget.Entry
+	hexDisplay      *canvas.Text
+	charDisplay     *canvas.Text
 	byteGroupSelect *widget.Select
 	encodingSelect  *widget.Select
 	statusLabel     *widget.Label
@@ -151,15 +151,13 @@ func (h *HexDumpApp) createMainContent() *container.Split {
 	h.cachedHexLines = make(map[int]string)
 	h.cachedCharLines = make(map[int]string)
 
-	// Create hex display - using Entry for better performance
-	h.hexDisplay = widget.NewMultiLineEntry()
-	h.hexDisplay.Wrapping = fyne.TextWrapOff
-	h.hexDisplay.Disable() // Make it read-only
+	// Create hex display - using canvas.Text for better color control
+	h.hexDisplay = canvas.NewText("", color.White)
+	h.hexDisplay.TextStyle.Monospace = true
 
 	// Create character display
-	h.charDisplay = widget.NewMultiLineEntry()
-	h.charDisplay.Wrapping = fyne.TextWrapOff
-	h.charDisplay.Disable() // Make it read-only
+	h.charDisplay = canvas.NewText("", color.White)
+	h.charDisplay.TextStyle.Monospace = true
 
 	// Create scroll containers
 	hexScroll := container.NewScroll(h.hexDisplay)
@@ -270,8 +268,8 @@ func (h *HexDumpApp) refreshVisibleContent() {
 	hexContent := h.generateVisibleHexDisplay()
 	charContent := h.generateVisibleCharDisplay()
 
-	h.hexDisplay.SetText(hexContent)
-	h.charDisplay.SetText(charContent)
+	h.hexDisplay.ParseMarkdown("```\n" + hexContent + "\n```")
+	h.charDisplay.ParseMarkdown("```\n" + charContent + "\n```")
 }
 
 // openFile opens a native Windows file dialog and loads the selected file
@@ -341,8 +339,8 @@ func (h *HexDumpApp) updateDisplay() {
 	}
 
 	if len(h.fileData) == 0 {
-		h.hexDisplay.SetText("")
-		h.charDisplay.SetText("")
+		h.hexDisplay.ParseMarkdown("")
+		h.charDisplay.ParseMarkdown("")
 		return
 	}
 
@@ -357,8 +355,8 @@ func (h *HexDumpApp) updateDisplay() {
 	hexContent := h.generateVisibleHexDisplay()
 	charContent := h.generateVisibleCharDisplay()
 
-	h.hexDisplay.SetText(hexContent)
-	h.charDisplay.SetText(charContent)
+	h.hexDisplay.ParseMarkdown("```\n" + hexContent + "\n```")
+	h.charDisplay.ParseMarkdown("```\n" + charContent + "\n```")
 }
 
 // generateVisibleHexDisplay generates only the visible portion of hex display
