@@ -20,6 +20,14 @@ import (
 	"golang.org/x/text/transform"
 )
 
+// Package-scope variable to cache the debug setting at startup.
+var debugEnabled bool
+
+// init function runs once when the package is initialized.
+func init() {
+	debugEnabled = os.Getenv("HEXDUMP_DEBUG") != ""
+}
+
 // HexDumpApp represents the main application structure
 type HexDumpApp struct {
 	app    fyne.App
@@ -30,8 +38,8 @@ type HexDumpApp struct {
 	fileName string
 
 	// GUI components
-	hexDisplay      *canvas.Text
-	charDisplay     *canvas.Text
+	hexDisplay      *widget.RichText
+	charDisplay     *widget.RichText
 	byteGroupSelect *widget.Select
 	encodingSelect  *widget.Select
 	statusLabel     *widget.Label
@@ -42,13 +50,8 @@ type HexDumpApp struct {
 	encoding      string
 	bytesPerLine  int
 
-	// Virtual scrolling
-	visibleLines    int
-	currentTopLine  int
-	totalLines      int
-	lineHeight      float32
-	cachedHexLines  map[int]string
-	cachedCharLines map[int]string
+	// Display metrics
+	totalLines int
 }
 
 // NewHexDumpApp creates a new hex dump application instance
@@ -145,19 +148,13 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 
 // createMainContent creates the main content area with hex and character displays
 func (h *HexDumpApp) createMainContent() *container.Split {
-	// Initialize virtual scrolling parameters
-	h.visibleLines = 30 // Show ~30 lines at a time
-	h.currentTopLine = 0
-	h.cachedHexLines = make(map[int]string)
-	h.cachedCharLines = make(map[int]string)
-
-	// Create hex display - using canvas.Text for better color control
-	h.hexDisplay = canvas.NewText("", color.White)
-	h.hexDisplay.TextStyle.Monospace = true
+	// Create hex display - using widget.RichText for better scroll support
+	h.hexDisplay = widget.NewRichText()
+	h.hexDisplay.Wrapping = fyne.TextWrapOff
 
 	// Create character display
-	h.charDisplay = canvas.NewText("", color.White)
-	h.charDisplay.TextStyle.Monospace = true
+	h.charDisplay = widget.NewRichText()
+	h.charDisplay.Wrapping = fyne.TextWrapOff
 
 	// Create scroll containers
 	hexScroll := container.NewScroll(h.hexDisplay)
@@ -195,81 +192,60 @@ func (h *HexDumpApp) synchronizeScrolling(hexScroll, charScroll *container.Scrol
 	// Create a flag to prevent infinite recursion during synchronization
 	var syncing bool
 
+	// Debug: Print when scroll synchronization is set up
+	if debugEnabled {
+		fmt.Println("DEBUG: Setting up scroll synchronization")
+	}
+
 	// Synchronize hex scroll to character scroll
 	hexScroll.OnScrolled = func(position fyne.Position) {
+		if debugEnabled {
+			fmt.Printf("DEBUG: Hex scroll event - Position: X=%.2f, Y=%.2f, Syncing=%t\n", position.X, position.Y, syncing)
+		}
 		if syncing {
+			if debugEnabled {
+				fmt.Println("DEBUG: Hex scroll - skipping due to syncing flag")
+			}
 			return
 		}
 		syncing = true
+		if debugEnabled {
+			fmt.Printf("DEBUG: Hex scroll - setting char scroll offset to X=%.2f, Y=%.2f\n", position.X, position.Y)
+		}
 		charScroll.Offset = position
 		charScroll.Refresh()
-
-		// Update virtual scrolling based on scroll position
-		h.updateVirtualScroll(position.Y)
 		syncing = false
+		if debugEnabled {
+			fmt.Println("DEBUG: Hex scroll - synchronization complete")
+		}
 	}
 
 	// Synchronize character scroll to hex scroll
 	charScroll.OnScrolled = func(position fyne.Position) {
+		if debugEnabled {
+			fmt.Printf("DEBUG: Char scroll event - Position: X=%.2f, Y=%.2f, Syncing=%t\n", position.X, position.Y, syncing)
+		}
 		if syncing {
+			if debugEnabled {
+				fmt.Println("DEBUG: Char scroll - skipping due to syncing flag")
+			}
 			return
 		}
 		syncing = true
+		if debugEnabled {
+			fmt.Printf("DEBUG: Char scroll - setting hex scroll offset to X=%.2f, Y=%.2f\n", position.X, position.Y)
+		}
 		hexScroll.Offset = position
 		hexScroll.Refresh()
-
-		// Update virtual scrolling based on scroll position
-		h.updateVirtualScroll(position.Y)
 		syncing = false
-	}
-}
-
-// updateVirtualScroll updates the virtual scrolling based on scroll position
-func (h *HexDumpApp) updateVirtualScroll(scrollY float32) {
-	if len(h.fileData) == 0 {
-		return
+		if debugEnabled {
+			fmt.Println("DEBUG: Char scroll - synchronization complete")
+		}
 	}
 
-	// Estimate line height (this is approximate)
-	if h.lineHeight == 0 {
-		h.lineHeight = 20 // Default line height in pixels
+	if debugEnabled {
+		fmt.Println("DEBUG: Scroll synchronization setup complete")
 	}
-
-	// Calculate which line should be at the top
-	newTopLine := int(scrollY / h.lineHeight)
-	if newTopLine < 0 {
-		newTopLine = 0
-	}
-	if newTopLine >= h.totalLines {
-		newTopLine = h.totalLines - 1
-	}
-
-	// Only update if the top line changed significantly
-	if abs(newTopLine-h.currentTopLine) > 5 {
-		h.currentTopLine = newTopLine
-		h.refreshVisibleContent()
-	}
-}
-
-// abs returns the absolute value of an integer
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// refreshVisibleContent refreshes only the visible content
-func (h *HexDumpApp) refreshVisibleContent() {
-	if h.hexDisplay == nil || h.charDisplay == nil {
-		return
-	}
-
-	hexContent := h.generateVisibleHexDisplay()
-	charContent := h.generateVisibleCharDisplay()
-
-	h.hexDisplay.ParseMarkdown("```\n" + hexContent + "\n```")
-	h.charDisplay.ParseMarkdown("```\n" + charContent + "\n```")
 }
 
 // openFile opens a native Windows file dialog and loads the selected file
@@ -331,7 +307,7 @@ func (h *HexDumpApp) onEncodingChanged(value string) {
 	h.updateDisplay()
 }
 
-// updateDisplay updates both hex and character displays using virtual scrolling
+// updateDisplay updates both hex and character displays
 func (h *HexDumpApp) updateDisplay() {
 	// Safety check: ensure widgets are initialized
 	if h.hexDisplay == nil || h.charDisplay == nil {
@@ -347,48 +323,13 @@ func (h *HexDumpApp) updateDisplay() {
 	// Calculate total lines needed
 	h.totalLines = (len(h.fileData) + h.bytesPerLine - 1) / h.bytesPerLine
 
-	// Clear cache when settings change
-	h.cachedHexLines = make(map[int]string)
-	h.cachedCharLines = make(map[int]string)
+	// Generate complete file content
+	hexContent := h.generateHexDisplay()
+	charContent := h.generateCharDisplay()
 
-	// Generate visible content only
-	hexContent := h.generateVisibleHexDisplay()
-	charContent := h.generateVisibleCharDisplay()
-
+	// Use ParseMarkdown with code blocks to get monospace font
 	h.hexDisplay.ParseMarkdown("```\n" + hexContent + "\n```")
 	h.charDisplay.ParseMarkdown("```\n" + charContent + "\n```")
-}
-
-// generateVisibleHexDisplay generates only the visible portion of hex display
-func (h *HexDumpApp) generateVisibleHexDisplay() string {
-	var builder strings.Builder
-	dataLen := len(h.fileData)
-
-	// Calculate which lines to show
-	endLine := h.currentTopLine + h.visibleLines
-	if endLine > h.totalLines {
-		endLine = h.totalLines
-	}
-
-	for lineNum := h.currentTopLine; lineNum < endLine; lineNum++ {
-		// Check cache first
-		if cachedLine, exists := h.cachedHexLines[lineNum]; exists {
-			builder.WriteString(cachedLine)
-			continue
-		}
-
-		// Generate line
-		offset := lineNum * h.bytesPerLine
-		if offset >= dataLen {
-			break
-		}
-
-		lineContent := h.generateHexLine(offset)
-		h.cachedHexLines[lineNum] = lineContent
-		builder.WriteString(lineContent)
-	}
-
-	return builder.String()
 }
 
 // generateHexLine generates a single hex line
@@ -451,38 +392,6 @@ func (h *HexDumpApp) generateHexDisplay() string {
 
 	for offset := 0; offset < dataLen; offset += h.bytesPerLine {
 		builder.WriteString(h.generateHexLine(offset))
-	}
-
-	return builder.String()
-}
-
-// generateVisibleCharDisplay generates only the visible portion of character display
-func (h *HexDumpApp) generateVisibleCharDisplay() string {
-	var builder strings.Builder
-	dataLen := len(h.fileData)
-
-	// Calculate which lines to show
-	endLine := h.currentTopLine + h.visibleLines
-	if endLine > h.totalLines {
-		endLine = h.totalLines
-	}
-
-	for lineNum := h.currentTopLine; lineNum < endLine; lineNum++ {
-		// Check cache first
-		if cachedLine, exists := h.cachedCharLines[lineNum]; exists {
-			builder.WriteString(cachedLine)
-			continue
-		}
-
-		// Generate line
-		offset := lineNum * h.bytesPerLine
-		if offset >= dataLen {
-			break
-		}
-
-		lineContent := h.generateCharLine(offset)
-		h.cachedCharLines[lineNum] = lineContent
-		builder.WriteString(lineContent)
 	}
 
 	return builder.String()
