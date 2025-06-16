@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+# Files used for testing.
+*.txt
+*.bin
+
 # Test binary, built with `go test -c`
 *.test
 
