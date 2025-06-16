@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"image/color"
-	"io"
 	"os"
 	"strings"
 	"unicode"
@@ -37,9 +36,18 @@ type HexDumpApp struct {
 	fileData []byte
 	fileName string
 
+	// Progressive loading
+	file          *os.File
+	fileSize      int64
+	loadedBytes   int64
+	chunkSize     int
+	loadMoreBtn   *widget.Button
+	progressLabel *widget.Label
+	isLoading     bool
+
 	// GUI components
-	hexDisplay      *widget.RichText
-	charDisplay     *widget.RichText
+	hexDisplay      *widget.Entry
+	charDisplay     *widget.Entry
 	byteGroupSelect *widget.Select
 	encodingSelect  *widget.Select
 	statusLabel     *widget.Label
@@ -62,6 +70,7 @@ func NewHexDumpApp(app fyne.App, window fyne.Window) *HexDumpApp {
 		bytesPerGroup: 1,
 		encoding:      "ISO Latin-1",
 		bytesPerLine:  16,
+		chunkSize:     1024 * 1024, // Default 1MB chunks
 	}
 }
 
@@ -128,6 +137,14 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 	)
 	h.encodingSelect.SetSelected("ISO Latin-1")
 
+	// Load More button (initially hidden)
+	h.loadMoreBtn = widget.NewButton("Load More", h.loadNextChunk)
+	h.loadMoreBtn.Hide()
+
+	// Progress label (initially hidden)
+	h.progressLabel = widget.NewLabel("")
+	h.progressLabel.Hide()
+
 	// Create toolbar content
 	toolbarContent := container.NewHBox(
 		openBtn,
@@ -137,6 +154,9 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 		widget.NewSeparator(),
 		widget.NewLabel("Encoding:"),
 		h.encodingSelect,
+		widget.NewSeparator(),
+		h.loadMoreBtn,
+		h.progressLabel,
 	)
 
 	// Create light background for toolbar
@@ -148,13 +168,17 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 
 // createMainContent creates the main content area with hex and character displays
 func (h *HexDumpApp) createMainContent() *container.Split {
-	// Create hex display - using widget.RichText for better scroll support
-	h.hexDisplay = widget.NewRichText()
+	// Create hex display - using widget.Entry for better performance
+	h.hexDisplay = widget.NewMultiLineEntry()
 	h.hexDisplay.Wrapping = fyne.TextWrapOff
+	h.hexDisplay.TextStyle.Monospace = true
+	h.hexDisplay.Disable() // Make read-only
 
 	// Create character display
-	h.charDisplay = widget.NewRichText()
+	h.charDisplay = widget.NewMultiLineEntry()
 	h.charDisplay.Wrapping = fyne.TextWrapOff
+	h.charDisplay.TextStyle.Monospace = true
+	h.charDisplay.Disable() // Make read-only
 
 	// Create scroll containers
 	hexScroll := container.NewScroll(h.hexDisplay)
@@ -218,6 +242,9 @@ func (h *HexDumpApp) synchronizeScrolling(hexScroll, charScroll *container.Scrol
 		if debugEnabled {
 			fmt.Println("DEBUG: Hex scroll - synchronization complete")
 		}
+
+		// Check for auto-load on scroll (Phase 3)
+		h.checkAutoLoad(hexScroll)
 	}
 
 	// Synchronize character scroll to hex scroll
@@ -241,6 +268,9 @@ func (h *HexDumpApp) synchronizeScrolling(hexScroll, charScroll *container.Scrol
 		if debugEnabled {
 			fmt.Println("DEBUG: Char scroll - synchronization complete")
 		}
+
+		// Check for auto-load on scroll (Phase 3)
+		h.checkAutoLoad(hexScroll)
 	}
 
 	if debugEnabled {
@@ -262,26 +292,39 @@ func (h *HexDumpApp) openFile() {
 	h.loadFileFromPath(filename)
 }
 
-// loadFileFromPath loads a file from the given file path
+// loadFileFromPath loads a file from the given file path using progressive loading
 func (h *HexDumpApp) loadFileFromPath(filePath string) {
-	// Open and read file data
+	// Close any previously opened file
+	if h.file != nil {
+		h.file.Close()
+		h.file = nil
+	}
+
+	// Open file for progressive reading
 	file, err := os.Open(filePath)
 	if err != nil {
 		dialog.ShowError(err, h.window)
 		return
 	}
-	defer file.Close()
 
-	data, err := io.ReadAll(file)
+	// Get file size
+	fileInfo, err := file.Stat()
 	if err != nil {
+		file.Close()
 		dialog.ShowError(err, h.window)
 		return
 	}
 
-	h.fileData = data
+	// Initialize progressive loading state
+	h.file = file
 	h.fileName = filePath
-	h.updateDisplay()
-	h.updateStatus()
+	h.fileSize = fileInfo.Size()
+	h.loadedBytes = 0
+	h.fileData = nil // Clear existing data
+	h.isLoading = false
+
+	// Load first chunk
+	h.loadNextChunk()
 }
 
 // onByteGroupChanged handles byte grouping selection changes
@@ -315,8 +358,8 @@ func (h *HexDumpApp) updateDisplay() {
 	}
 
 	if len(h.fileData) == 0 {
-		h.hexDisplay.ParseMarkdown("")
-		h.charDisplay.ParseMarkdown("")
+		h.hexDisplay.SetText("")
+		h.charDisplay.SetText("")
 		return
 	}
 
@@ -327,9 +370,9 @@ func (h *HexDumpApp) updateDisplay() {
 	hexContent := h.generateHexDisplay()
 	charContent := h.generateCharDisplay()
 
-	// Use ParseMarkdown with code blocks to get monospace font
-	h.hexDisplay.ParseMarkdown("```\n" + hexContent + "\n```")
-	h.charDisplay.ParseMarkdown("```\n" + charContent + "\n```")
+	// Set text directly - Entry widgets use monospace font by default
+	h.hexDisplay.SetText(hexContent)
+	h.charDisplay.SetText(charContent)
 }
 
 // generateHexLine generates a single hex line
@@ -542,4 +585,115 @@ func (h *HexDumpApp) updateStatus() {
 // showAbout shows the about dialog
 func (h *HexDumpApp) showAbout() {
 	dialog.ShowInformation("About", "Hex Dump Utility\n\nA graphical hex dump tool built with Fyne.\nSupports multiple byte groupings and character encodings.", h.window)
+}
+
+// loadNextChunk loads the next chunk of data from the file
+func (h *HexDumpApp) loadNextChunk() {
+	if h.file == nil || h.isLoading {
+		return
+	}
+
+	// Check if we've reached the end of the file
+	if h.loadedBytes >= h.fileSize {
+		h.updateLoadMoreButton()
+		return
+	}
+
+	h.isLoading = true
+	h.updateLoadMoreButton()
+
+	// Calculate how much to read
+	remainingBytes := h.fileSize - h.loadedBytes
+	chunkSize := int64(h.chunkSize)
+	if remainingBytes < chunkSize {
+		chunkSize = remainingBytes
+	}
+
+	// Read the chunk
+	chunkData := make([]byte, chunkSize)
+	n, err := h.file.Read(chunkData)
+	if err != nil && err.Error() != "EOF" {
+		dialog.ShowError(err, h.window)
+		h.isLoading = false
+		h.updateLoadMoreButton()
+		return
+	}
+
+	if n > 0 {
+		// Append to existing data
+		h.fileData = append(h.fileData, chunkData[:n]...)
+		h.loadedBytes += int64(n)
+
+		// Update display
+		h.updateDisplay()
+		h.updateStatus()
+	}
+
+	h.isLoading = false
+	h.updateLoadMoreButton()
+}
+
+// updateLoadMoreButton updates the Load More button and progress label visibility and state
+func (h *HexDumpApp) updateLoadMoreButton() {
+	if h.file == nil {
+		// No file loaded
+		h.loadMoreBtn.Hide()
+		h.progressLabel.Hide()
+		return
+	}
+
+	// Show progress
+	progressText := fmt.Sprintf("Loaded %d of %d MB", h.loadedBytes/(1024*1024), h.fileSize/(1024*1024))
+	h.progressLabel.SetText(progressText)
+	h.progressLabel.Show()
+
+	if h.loadedBytes >= h.fileSize {
+		// File fully loaded
+		h.loadMoreBtn.Hide()
+		h.progressLabel.SetText(fmt.Sprintf("Complete: %d MB", h.fileSize/(1024*1024)))
+	} else if h.isLoading {
+		// Currently loading
+		h.loadMoreBtn.SetText("Loading...")
+		h.loadMoreBtn.Disable()
+		h.loadMoreBtn.Show()
+	} else {
+		// More data available
+		h.loadMoreBtn.SetText("Load More")
+		h.loadMoreBtn.Enable()
+		h.loadMoreBtn.Show()
+	}
+}
+
+// checkAutoLoad checks if we should automatically load more data based on scroll position (Phase 3)
+func (h *HexDumpApp) checkAutoLoad(scroll *container.Scroll) {
+	// Only auto-load if we have more data to load and we're not already loading
+	if h.file == nil || h.isLoading || h.loadedBytes >= h.fileSize {
+		return
+	}
+
+	// Get the content size and viewport size
+	contentSize := h.hexDisplay.Size()
+	viewportSize := scroll.Size()
+
+	// Calculate scroll percentage
+	// We need to check if we're near the bottom (90% threshold)
+	if contentSize.Height > 0 && viewportSize.Height > 0 {
+		maxScrollY := contentSize.Height - viewportSize.Height
+		if maxScrollY > 0 {
+			scrollPercentage := scroll.Offset.Y / maxScrollY
+
+			if debugEnabled {
+				fmt.Printf("DEBUG: Auto-load check - ScrollY: %.2f, MaxScrollY: %.2f, Percentage: %.2f%%\n",
+					scroll.Offset.Y, maxScrollY, scrollPercentage*100)
+			}
+
+			// If we're at 90% or more, trigger auto-load
+			if scrollPercentage >= 0.9 {
+				if debugEnabled {
+					fmt.Println("DEBUG: Auto-load triggered - loading next chunk")
+				}
+				go h.loadNextChunk() // Load in background to avoid blocking UI
+			}
+		}
+	}
 }
