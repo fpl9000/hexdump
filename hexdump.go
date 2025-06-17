@@ -25,6 +25,10 @@ var debugEnabled bool
 // init function runs once when the package is initialized.
 func init() {
 	debugEnabled = os.Getenv("HEXDUMP_DEBUG") != ""
+
+	if debugEnabled {
+		fmt.Println("DEBUG: HexDumpApp initialized with debug mode enabled")
+	}
 }
 
 // HexDumpApp represents the main application structure
@@ -46,8 +50,8 @@ type HexDumpApp struct {
 	isLoading     bool
 
 	// GUI components
-	hexDisplay      *widget.Entry
-	charDisplay     *widget.Entry
+	hexDisplay      *widget.Label
+	charDisplay     *widget.Label
 	byteGroupSelect *widget.Select
 	encodingSelect  *widget.Select
 	statusLabel     *widget.Label
@@ -168,17 +172,13 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 
 // createMainContent creates the main content area with hex and character displays
 func (h *HexDumpApp) createMainContent() *container.Split {
-	// Create hex display - using widget.Entry for better performance
-	h.hexDisplay = widget.NewMultiLineEntry()
-	h.hexDisplay.Wrapping = fyne.TextWrapOff
+	// Create hex display - using widget.Label with monospace font
+	h.hexDisplay = widget.NewLabel("")
 	h.hexDisplay.TextStyle.Monospace = true
-	h.hexDisplay.Disable() // Make read-only
 
 	// Create character display
-	h.charDisplay = widget.NewMultiLineEntry()
-	h.charDisplay.Wrapping = fyne.TextWrapOff
+	h.charDisplay = widget.NewLabel("")
 	h.charDisplay.TextStyle.Monospace = true
-	h.charDisplay.Disable() // Make read-only
 
 	// Create scroll containers
 	hexScroll := container.NewScroll(h.hexDisplay)
