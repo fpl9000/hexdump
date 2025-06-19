@@ -39,7 +39,7 @@ func main() {
 
 	// Create the main window
 	myWindow := myApp.NewWindow("Hex Dump Utility")
-	myWindow.Resize(fyne.NewSize(1000, 600))
+	myWindow.Resize(fyne.NewSize(650, 600))
 
 	// Create the hex dump application instance
 	hexApp := NewHexDumpApp(myApp, myWindow)

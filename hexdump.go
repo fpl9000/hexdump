@@ -50,12 +50,13 @@ type HexDumpApp struct {
 	isLoading     bool
 
 	// GUI components
-	hexDisplay      *widget.Label
-	charDisplay     *widget.Label
+	// hexDisplay      *widget.Label // Removed
+	// charDisplay     *widget.Label // Removed
 	byteGroupSelect *widget.Select
 	encodingSelect  *widget.Select
 	statusLabel     *widget.Label
-	scrollContainer *container.Scroll
+	// scrollContainer *container.Scroll // Removed
+	dataList *widget.List // Added
 
 	// Settings
 	bytesPerGroup int
@@ -170,28 +171,16 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 	return container.NewStack(background, toolbarContent)
 }
 
-// createMainContent creates the main content area with hex and character displays
-func (h *HexDumpApp) createMainContent() *container.Split {
-	// Create hex display - using widget.Label with monospace font
-	h.hexDisplay = widget.NewLabel("")
-	h.hexDisplay.TextStyle.Monospace = true
-
-	// Create character display
-	h.charDisplay = widget.NewLabel("")
-	h.charDisplay.TextStyle.Monospace = true
-
-	// Create scroll containers
-	hexScroll := container.NewScroll(h.hexDisplay)
-	charScroll := container.NewScroll(h.charDisplay)
-
-	// Synchronize scrolling between the two panels
-	h.synchronizeScrolling(hexScroll, charScroll)
-
-	// Create split container
-	split := container.NewHSplit(hexScroll, charScroll)
-	split.SetOffset(0.7) // 70% for hex, 30% for characters
-
-	return split
+// createMainContent creates the main content area using widget.List.
+func (h *HexDumpApp) createMainContent() fyne.CanvasObject {
+	h.dataList = widget.NewList(
+		h.listLength,
+		h.listCreateItem,
+		h.listUpdateItem,
+	)
+	// Hide separators to eliminate space between line rectangles
+	h.dataList.HideSeparators = true
+	return h.dataList
 }
 
 // createStatusBar creates the status bar
@@ -208,75 +197,7 @@ func (h *HexDumpApp) createStatusBar() *fyne.Container {
 	return container.NewStack(background, statusContent)
 }
 
-// synchronizeScrolling synchronizes scrolling between hex and character displays
-func (h *HexDumpApp) synchronizeScrolling(hexScroll, charScroll *container.Scroll) {
-	// Store reference to the scroll containers for potential future use
-	h.scrollContainer = hexScroll
-
-	// Create a flag to prevent infinite recursion during synchronization
-	var syncing bool
-
-	// Debug: Print when scroll synchronization is set up
-	if debugEnabled {
-		fmt.Println("DEBUG: Setting up scroll synchronization")
-	}
-
-	// Synchronize hex scroll to character scroll
-	hexScroll.OnScrolled = func(position fyne.Position) {
-		if debugEnabled {
-			fmt.Printf("DEBUG: Hex scroll event - Position: X=%.2f, Y=%.2f, Syncing=%t\n", position.X, position.Y, syncing)
-		}
-		if syncing {
-			if debugEnabled {
-				fmt.Println("DEBUG: Hex scroll - skipping due to syncing flag")
-			}
-			return
-		}
-		syncing = true
-		if debugEnabled {
-			fmt.Printf("DEBUG: Hex scroll - setting char scroll offset to X=%.2f, Y=%.2f\n", position.X, position.Y)
-		}
-		charScroll.Offset = position
-		charScroll.Refresh()
-		syncing = false
-		if debugEnabled {
-			fmt.Println("DEBUG: Hex scroll - synchronization complete")
-		}
-
-		// Check for auto-load on scroll (Phase 3)
-		h.checkAutoLoad(hexScroll)
-	}
-
-	// Synchronize character scroll to hex scroll
-	charScroll.OnScrolled = func(position fyne.Position) {
-		if debugEnabled {
-			fmt.Printf("DEBUG: Char scroll event - Position: X=%.2f, Y=%.2f, Syncing=%t\n", position.X, position.Y, syncing)
-		}
-		if syncing {
-			if debugEnabled {
-				fmt.Println("DEBUG: Char scroll - skipping due to syncing flag")
-			}
-			return
-		}
-		syncing = true
-		if debugEnabled {
-			fmt.Printf("DEBUG: Char scroll - setting hex scroll offset to X=%.2f, Y=%.2f\n", position.X, position.Y)
-		}
-		hexScroll.Offset = position
-		hexScroll.Refresh()
-		syncing = false
-		if debugEnabled {
-			fmt.Println("DEBUG: Char scroll - synchronization complete")
-		}
-
-		// Check for auto-load on scroll (Phase 3)
-		h.checkAutoLoad(hexScroll)
-	}
-
-	if debugEnabled {
-		fmt.Println("DEBUG: Scroll synchronization setup complete")
-	}
-}
+// synchronizeScrolling function REMOVED
 
 // openFile opens a native Windows file dialog and loads the selected file
 func (h *HexDumpApp) openFile() {
@@ -350,29 +271,101 @@ func (h *HexDumpApp) onEncodingChanged(value string) {
 	h.updateDisplay()
 }
 
-// updateDisplay updates both hex and character displays
+// updateDisplay updates the dataList
 func (h *HexDumpApp) updateDisplay() {
-	// Safety check: ensure widgets are initialized
-	if h.hexDisplay == nil || h.charDisplay == nil {
+	if h.dataList == nil { // Check if dataList is initialized
 		return
 	}
 
 	if len(h.fileData) == 0 {
-		h.hexDisplay.SetText("")
-		h.charDisplay.SetText("")
+		h.totalLines = 0
+		h.dataList.Refresh()
 		return
 	}
 
 	// Calculate total lines needed
 	h.totalLines = (len(h.fileData) + h.bytesPerLine - 1) / h.bytesPerLine
 
-	// Generate complete file content
-	hexContent := h.generateHexDisplay()
-	charContent := h.generateCharDisplay()
+	// The actual updating of list items will be handled by widget.List's
+	// UpdateItem callback, which will use generateHexLine and generateCharLine.
+	// For now, just refresh the list.
+	h.dataList.Refresh()
+}
 
-	// Set text directly - Entry widgets use monospace font by default
-	h.hexDisplay.SetText(hexContent)
-	h.charDisplay.SetText(charContent)
+// listLength returns the number of items in the list (number of lines).
+func (h *HexDumpApp) listLength() int {
+	if h.fileData == nil || h.bytesPerLine == 0 {
+		return 0
+	}
+	return (len(h.fileData) + h.bytesPerLine - 1) / h.bytesPerLine
+}
+
+// listCreateItem creates a new template item for the list.
+func (h *HexDumpApp) listCreateItem() fyne.CanvasObject {
+	// Use canvas.Text for better control over text positioning and size
+	hexText := canvas.NewText("HEX_PLACEHOLDER", color.White)
+	hexText.TextStyle.Monospace = true
+	hexText.TextSize = 12 // Smaller font size to fit in reduced height
+
+	charText := canvas.NewText("CHAR_PLACEHOLDER", color.White)
+	charText.TextStyle.Monospace = true
+	charText.TextSize = 12 // Smaller font size to fit in reduced height
+
+	// Create a spacer to separate hex data from character data for better readability
+	spacer := canvas.NewText("          ", color.Transparent) // Invisible spacer text
+	spacer.TextStyle.Monospace = true
+	// Set the same font size as hex and char text for alignment
+	spacer.TextSize = 12
+
+	// Use HBox with spacer between hex and character data
+	return container.NewHBox(hexText, spacer, charText)
+}
+
+// listUpdateItem updates the content of a list item.
+func (h *HexDumpApp) listUpdateItem(id widget.ListItemID, item fyne.CanvasObject) {
+	if h.fileData == nil {
+		return // No data to display
+	}
+	// The item is now an HBox container with hex, spacer, and char text objects
+	hbox := item.(*fyne.Container)
+	hexText := hbox.Objects[0].(*canvas.Text)
+	// spacer is at index 1, skip it
+	charText := hbox.Objects[2].(*canvas.Text)
+
+	offset := id * h.bytesPerLine
+	if offset >= len(h.fileData) {
+		// This case should ideally not be reached if listLength is correct
+		hexText.Text = ""
+		charText.Text = ""
+		hexText.Refresh()
+		charText.Refresh()
+		return
+	}
+
+	hexAndAddrStr := h.generateHexLine(offset) // This includes address
+	charStr := h.generateCharLine(offset)
+
+	hexText.Text = strings.TrimSpace(hexAndAddrStr)
+	charText.Text = strings.TrimSpace(charStr)
+	hexText.Refresh()
+	charText.Refresh()
+
+	// Set a custom height for this list item to reduce vertical padding
+	// Use 18 pixels to accommodate the smaller 12pt font with minimal padding
+	h.dataList.SetItemHeight(id, 18) // Slightly increased to prevent text clipping
+
+	// Auto-load trigger
+	const autoLoadThreshold = 10 // Number of items from the end to trigger load
+	// Ensure listLength is positive to prevent issues with subtraction from zero
+	currentListLength := h.listLength()
+	if currentListLength > 0 && id >= (currentListLength-autoLoadThreshold) {
+		if h.file != nil && !h.isLoading && h.loadedBytes < h.fileSize {
+			if debugEnabled {
+				fmt.Printf("DEBUG: Auto-load triggered from listUpdateItem - id: %d, listLength: %d\n", id, currentListLength)
+			}
+			go h.loadNextChunk() // Load in background
+		}
+	}
 }
 
 // generateHexLine generates a single hex line
@@ -424,11 +417,12 @@ func (h *HexDumpApp) generateHexLine(offset int) string {
 		}
 	}
 
-	builder.WriteString("\n")
-	return builder.String()
+	builder.WriteString("\n")                         // Newline might not be needed for List items
+	return strings.TrimRight(builder.String(), "\n ") // Trim trailing space/newline for list display
 }
 
 // generateHexDisplay generates the hexadecimal display content (legacy method for compatibility)
+// This will likely be removed or adapted when widget.List is fully integrated.
 func (h *HexDumpApp) generateHexDisplay() string {
 	var builder strings.Builder
 	dataLen := len(h.fileData)
@@ -450,18 +444,19 @@ func (h *HexDumpApp) generateCharLine(offset int) string {
 
 	lineData := h.fileData[offset:lineEnd]
 	chars := h.bytesToChars(lineData)
-	return chars + "\n"
+	return chars // Newline might not be needed for List items
 }
 
 // generateCharDisplay generates the character display content (legacy method for compatibility)
+// This will likely be removed or adapted when widget.List is fully integrated.
 func (h *HexDumpApp) generateCharDisplay() string {
 	var builder strings.Builder
 	dataLen := len(h.fileData)
 
 	for offset := 0; offset < dataLen; offset += h.bytesPerLine {
 		builder.WriteString(h.generateCharLine(offset))
+		builder.WriteString("\n") // Add newline if generating full display text
 	}
-
 	return builder.String()
 }
 
@@ -578,7 +573,8 @@ func (h *HexDumpApp) updateStatus() {
 	if h.fileName == "" {
 		h.statusLabel.SetText("Ready")
 	} else {
-		h.statusLabel.SetText(fmt.Sprintf("File: %s | Size: %d bytes", h.fileName, len(h.fileData)))
+		// Use len(h.fileData) for current loaded size, or h.fileSize for total file size
+		h.statusLabel.SetText(fmt.Sprintf("File: %s | Size: %d bytes", h.fileName, h.fileSize))
 	}
 }
 
@@ -661,39 +657,5 @@ func (h *HexDumpApp) updateLoadMoreButton() {
 		h.loadMoreBtn.SetText("Load More")
 		h.loadMoreBtn.Enable()
 		h.loadMoreBtn.Show()
-	}
-}
-
-// checkAutoLoad checks if we should automatically load more data based on scroll position (Phase 3)
-func (h *HexDumpApp) checkAutoLoad(scroll *container.Scroll) {
-	// Only auto-load if we have more data to load and we're not already loading
-	if h.file == nil || h.isLoading || h.loadedBytes >= h.fileSize {
-		return
-	}
-
-	// Get the content size and viewport size
-	contentSize := h.hexDisplay.Size()
-	viewportSize := scroll.Size()
-
-	// Calculate scroll percentage
-	// We need to check if we're near the bottom (90% threshold)
-	if contentSize.Height > 0 && viewportSize.Height > 0 {
-		maxScrollY := contentSize.Height - viewportSize.Height
-		if maxScrollY > 0 {
-			scrollPercentage := scroll.Offset.Y / maxScrollY
-
-			if debugEnabled {
-				fmt.Printf("DEBUG: Auto-load check - ScrollY: %.2f, MaxScrollY: %.2f, Percentage: %.2f%%\n",
-					scroll.Offset.Y, maxScrollY, scrollPercentage*100)
-			}
-
-			// If we're at 90% or more, trigger auto-load
-			if scrollPercentage >= 0.9 {
-				if debugEnabled {
-					fmt.Println("DEBUG: Auto-load triggered - loading next chunk")
-				}
-				go h.loadNextChunk() // Load in background to avoid blocking UI
-			}
-		}
 	}
 }
