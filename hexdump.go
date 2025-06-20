@@ -40,15 +40,6 @@ type HexDumpApp struct {
 	fileData []byte
 	fileName string
 
-	// Progressive loading
-	file          *os.File
-	fileSize      int64
-	loadedBytes   int64
-	chunkSize     int
-	loadMoreBtn   *widget.Button
-	progressLabel *widget.Label
-	isLoading     bool
-
 	// GUI components
 	// hexDisplay      *widget.Label // Removed
 	// charDisplay     *widget.Label // Removed
@@ -75,7 +66,6 @@ func NewHexDumpApp(app fyne.App, window fyne.Window) *HexDumpApp {
 		bytesPerGroup: 1,
 		encoding:      "ISO Latin-1",
 		bytesPerLine:  16,
-		chunkSize:     1024 * 1024, // Default 1MB chunks
 	}
 }
 
@@ -142,14 +132,6 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 	)
 	h.encodingSelect.SetSelected("ISO Latin-1")
 
-	// Load More button (initially hidden)
-	h.loadMoreBtn = widget.NewButton("Load More", h.loadNextChunk)
-	h.loadMoreBtn.Hide()
-
-	// Progress label (initially hidden)
-	h.progressLabel = widget.NewLabel("")
-	h.progressLabel.Hide()
-
 	// Create toolbar content
 	toolbarContent := container.NewHBox(
 		openBtn,
@@ -159,9 +141,6 @@ func (h *HexDumpApp) createToolbar() *fyne.Container {
 		widget.NewSeparator(),
 		widget.NewLabel("Encoding:"),
 		h.encodingSelect,
-		widget.NewSeparator(),
-		h.loadMoreBtn,
-		h.progressLabel,
 	)
 
 	// Create light background for toolbar
@@ -213,39 +192,22 @@ func (h *HexDumpApp) openFile() {
 	h.loadFileFromPath(filename)
 }
 
-// loadFileFromPath loads a file from the given file path using progressive loading
+// loadFileFromPath loads a file from the given file path
 func (h *HexDumpApp) loadFileFromPath(filePath string) {
-	// Close any previously opened file
-	if h.file != nil {
-		h.file.Close()
-		h.file = nil
-	}
-
-	// Open file for progressive reading
-	file, err := os.Open(filePath)
+	// Read the entire file at once
+	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		dialog.ShowError(err, h.window)
 		return
 	}
 
-	// Get file size
-	fileInfo, err := file.Stat()
-	if err != nil {
-		file.Close()
-		dialog.ShowError(err, h.window)
-		return
-	}
-
-	// Initialize progressive loading state
-	h.file = file
+	// Set file data and name
+	h.fileData = fileData
 	h.fileName = filePath
-	h.fileSize = fileInfo.Size()
-	h.loadedBytes = 0
-	h.fileData = nil // Clear existing data
-	h.isLoading = false
 
-	// Load first chunk
-	h.loadNextChunk()
+	// Update display and status
+	h.updateDisplay()
+	h.updateStatus()
 }
 
 // onByteGroupChanged handles byte grouping selection changes
@@ -353,19 +315,6 @@ func (h *HexDumpApp) listUpdateItem(id widget.ListItemID, item fyne.CanvasObject
 	// Set a custom height for this list item to reduce vertical padding
 	// Use 18 pixels to accommodate the smaller 12pt font with minimal padding
 	h.dataList.SetItemHeight(id, 18) // Slightly increased to prevent text clipping
-
-	// Auto-load trigger
-	const autoLoadThreshold = 10 // Number of items from the end to trigger load
-	// Ensure listLength is positive to prevent issues with subtraction from zero
-	currentListLength := h.listLength()
-	if currentListLength > 0 && id >= (currentListLength-autoLoadThreshold) {
-		if h.file != nil && !h.isLoading && h.loadedBytes < h.fileSize {
-			if debugEnabled {
-				fmt.Printf("DEBUG: Auto-load triggered from listUpdateItem - id: %d, listLength: %d\n", id, currentListLength)
-			}
-			go h.loadNextChunk() // Load in background
-		}
-	}
 }
 
 // generateHexLine generates a single hex line
@@ -573,89 +522,11 @@ func (h *HexDumpApp) updateStatus() {
 	if h.fileName == "" {
 		h.statusLabel.SetText("Ready")
 	} else {
-		// Use len(h.fileData) for current loaded size, or h.fileSize for total file size
-		h.statusLabel.SetText(fmt.Sprintf("File: %s | Size: %d bytes", h.fileName, h.fileSize))
+		h.statusLabel.SetText(fmt.Sprintf("File: %s | Size: %d bytes", h.fileName, len(h.fileData)))
 	}
 }
 
 // showAbout shows the about dialog
 func (h *HexDumpApp) showAbout() {
 	dialog.ShowInformation("About", "Hex Dump Utility\n\nA graphical hex dump tool built with Fyne.\nSupports multiple byte groupings and character encodings.", h.window)
-}
-
-// loadNextChunk loads the next chunk of data from the file
-func (h *HexDumpApp) loadNextChunk() {
-	if h.file == nil || h.isLoading {
-		return
-	}
-
-	// Check if we've reached the end of the file
-	if h.loadedBytes >= h.fileSize {
-		h.updateLoadMoreButton()
-		return
-	}
-
-	h.isLoading = true
-	h.updateLoadMoreButton()
-
-	// Calculate how much to read
-	remainingBytes := h.fileSize - h.loadedBytes
-	chunkSize := int64(h.chunkSize)
-	if remainingBytes < chunkSize {
-		chunkSize = remainingBytes
-	}
-
-	// Read the chunk
-	chunkData := make([]byte, chunkSize)
-	n, err := h.file.Read(chunkData)
-	if err != nil && err.Error() != "EOF" {
-		dialog.ShowError(err, h.window)
-		h.isLoading = false
-		h.updateLoadMoreButton()
-		return
-	}
-
-	if n > 0 {
-		// Append to existing data
-		h.fileData = append(h.fileData, chunkData[:n]...)
-		h.loadedBytes += int64(n)
-
-		// Update display
-		h.updateDisplay()
-		h.updateStatus()
-	}
-
-	h.isLoading = false
-	h.updateLoadMoreButton()
-}
-
-// updateLoadMoreButton updates the Load More button and progress label visibility and state
-func (h *HexDumpApp) updateLoadMoreButton() {
-	if h.file == nil {
-		// No file loaded
-		h.loadMoreBtn.Hide()
-		h.progressLabel.Hide()
-		return
-	}
-
-	// Show progress
-	progressText := fmt.Sprintf("Loaded %d of %d MB", h.loadedBytes/(1024*1024), h.fileSize/(1024*1024))
-	h.progressLabel.SetText(progressText)
-	h.progressLabel.Show()
-
-	if h.loadedBytes >= h.fileSize {
-		// File fully loaded
-		h.loadMoreBtn.Hide()
-		h.progressLabel.SetText(fmt.Sprintf("Complete: %d MB", h.fileSize/(1024*1024)))
-	} else if h.isLoading {
-		// Currently loading
-		h.loadMoreBtn.SetText("Loading...")
-		h.loadMoreBtn.Disable()
-		h.loadMoreBtn.Show()
-	} else {
-		// More data available
-		h.loadMoreBtn.SetText("Load More")
-		h.loadMoreBtn.Enable()
-		h.loadMoreBtn.Show()
-	}
 }
