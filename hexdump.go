@@ -308,6 +308,16 @@ func (h *HexDumpApp) listUpdateItem(id widget.ListItemID, item fyne.CanvasObject
 	charStr := h.generateCharLine(offset)
 
 	hexText.Text = strings.TrimSpace(hexAndAddrStr)
+
+    // Maybe pad hexText.Text with spaces to align the character text with the previous line.
+    hexAndAddrColumns := 10 + 32 + (16/h.bytesPerGroup) - 1
+    hexTextLength := len(hexText.Text)
+    paddingLength := hexAndAddrColumns - hexTextLength
+
+    if paddingLength > 0 {
+        hexText.Text += strings.Repeat(" ", paddingLength)
+    }
+
 	charText.Text = strings.TrimSpace(charStr)
 	hexText.Refresh()
 	charText.Refresh()
@@ -393,6 +403,14 @@ func (h *HexDumpApp) generateCharLine(offset int) string {
 
 	lineData := h.fileData[offset:lineEnd]
 	chars := h.bytesToChars(lineData)
+
+//	// Pad the character string with spaces to align the last line.
+//	numRunes := utf8.RuneCountInString(chars)
+//	if numRunes < h.bytesPerLine {
+//		padding := strings.Repeat(" ", h.bytesPerLine-numRunes)
+//		chars += padding
+//	}
+
 	return chars // Newline might not be needed for List items
 }
 
