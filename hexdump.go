@@ -309,7 +309,10 @@ func (h *HexDumpApp) listUpdateItem(id widget.ListItemID, item fyne.CanvasObject
 
 	hexText.Text = strings.TrimSpace(hexAndAddrStr)
 
-    // Maybe pad hexText.Text with spaces to align the character text with the previous line.
+    // Maybe pad hexText.Text with spaces to align the character text with the previous line.  Here,
+    // 10 is the width of the hex address column (including the trailing space), 32 is the maximum
+    // number of hex digits in one line, and `(16/h.bytesPerGroup) - 1` is the maximum number of
+    // spaces between the hex digits in one line.
     hexAndAddrColumns := 10 + 32 + (16/h.bytesPerGroup) - 1
     hexTextLength := len(hexText.Text)
     paddingLength := hexAndAddrColumns - hexTextLength
